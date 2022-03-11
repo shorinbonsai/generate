@@ -1,0 +1,33 @@
+for gene_idx in 0..num_genes {
+            let gene = if rng.gen_bool(0.5) {
+                parent_1[gene_idx]
+            } else {
+                parent_2[gene_idx]
+            };
+            if child.len() == 0 {
+                child.push(gene);
+                cand_codes_vec = cloned_matrix[0].drain((gene + 1) as usize..).collect();
+            } else {
+                let mut flag: bool = true;
+
+                for j in &child {
+                    let new_code = cand_codes_vec[*j as usize];
+                    let indx = compat_matrix[0]
+                        .iter()
+                        .position(|&x| x == new_code)
+                        .unwrap();
+                    let child_indx = compat_matrix[0]
+                        .iter()
+                        .position(|&y| y == cand_codes_vec[gene as usize])
+                        .unwrap();
+                    if compat_matrix[indx][child_indx] == 0 {
+                        flag = false;
+                        continue;
+                    }
+                }
+                if flag == true {
+                    child.push(gene);
+                    cand_codes_vec = cand_codes_vec.drain((gene + 1) as usize..).collect();
+                }
+            }
+        }
