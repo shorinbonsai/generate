@@ -224,8 +224,22 @@ impl SelectionMethod for RouletteWheelSelection {
     }
 }
 
+//utility functions
 fn minimum(a: u32, b: u32, c: u32) -> u32 {
     cmp::min(a, cmp::min(b, c))
+}
+
+fn words_from_chrom(chrome: &Vec<u32>, candidates: &Vec<u32>) -> Vec<u32> {
+    let mut working_candidates = candidates.clone();
+    let mut codewords: Vec<u32> = vec![];
+    for i in 0..chrome.len() {
+        codewords.push(working_candidates[chrome[i] as usize]);
+        if working_candidates.len() > 1 {
+            working_candidates = working_candidates.drain((chrome[i] + 1) as usize..).collect();
+        }
+        
+    }
+    todo!()
 }
 
 fn hamming_dist(a: u32, b: u32) -> u32 {
