@@ -192,6 +192,15 @@ impl CodeMutation {
 
 impl MutationMethod for CodeMutation {
     fn mutate(&self, rng: &mut dyn RngCore, child: &mut Chromosome, compat_matrix: &Vec<Vec<u32>>) {
+        let element = rng.gen_range(0..child.genes.len());
+        child.genes.remove(element);
+        let mut tmp_code = vec![];
+        let mut cloned_matrix = compat_matrix[0].clone();
+        cloned_matrix.remove(0);
+        tmp_code.push(compat_matrix[0][child.genes[0] as usize]);
+        // for i in &compat_matrix[0] {
+        //     if *i < compat_matrix[0][j]
+        // }
     }
 }
 
