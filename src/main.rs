@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+// use rand_core::RngCore;
 use std::cmp;
 use std::iter::FromIterator;
 use std::ops::Index;
@@ -8,7 +10,7 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::RngCore;
 use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
+// use rand_chacha::ChaCha8Rng;
 
 const NUM_GEN: i32 = 100;
 const MUT_CHANCE: f32 = 0.15;
@@ -298,10 +300,23 @@ impl Population {
     ) -> Individual {
         if rng.gen_bool(cross_chance as _) {
             let crossoverpoint = Uniform::new(1, parent_1.chromosome.len()).sample(rng);
+            let mut candidates = compat_matrix[0].clone();
+            candidates = candidates.drain(1..).collect();
             let mut child: Vec<u32> = parent_1.chromosome.clone();
             let dispose: Vec<u32> = child.drain(crossoverpoint..).collect();
             let mut p2_dna = parent_2.chromosome.clone();
             p2_dna = p2_dna.drain(crossoverpoint..).collect();
+            let mut child_words = words_from_chrom(&child, &candidates);
+            let mut p2_dna_words = words_from_chrom(&p2_dna, &candidates);
+
+            for i in &p2_dna_words {
+                let mut flag: bool = true;
+                for j in &child_words {
+                    if !check_compat(*i, *j, &compat_matrix) {
+                        flag = false;
+                    }
+                }
+            }
             child.extend_from_slice(&p2_dna);
             let new = Individual::new(child, 0_u32, MUT_CHANCE);
             new
@@ -398,7 +413,8 @@ pub fn evolve(
 ) -> Vec<Individual> {
     assert!(!population.is_empty());
     let mut new_pop: Vec<Individual> = vec![];
-    for _ in 0..population.len() {
+    // let elite = vec![];
+    for _ in 1..population.len() {
         let parent_1 = Population::roulette_select(rng, population);
         let parent_2 = Population::roulette_select(rng, population);
         let mut child =
@@ -411,10 +427,10 @@ pub fn evolve(
 
 pub fn get_fitness(populat: &mut Population, compat_matrix: &Vec<Vec<u32>>) {
     let mut candidates = compat_matrix[0].clone();
-    let discard = candidates.remove(0);
+    let _discard = candidates.remove(0);
     for mut i in &mut populat.pop {
         let mut words = words_from_chrom(&i.chromosome, &candidates);
-        let (codes, fit) = fitness(&mut i.chromosome, &compat_matrix);
+        let (_codes, fit) = fitness(&mut words, &compat_matrix);
         i.fitness = fit;
     }
 }
@@ -422,7 +438,7 @@ pub fn get_fitness(populat: &mut Population, compat_matrix: &Vec<Vec<u32>>) {
 fn main() {
     let codes: Vec<u32> = create_candidates(6);
     // let c_matrix = compat_matrix(&codes, 3);
-    let mut rng = ChaCha8Rng::from_seed(Default::default());
+    let mut rng = rand::thread_rng();
     let init: Vec<Individual> = vec![];
     let mut test = Population { pop: init };
 
