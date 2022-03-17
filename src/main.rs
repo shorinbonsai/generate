@@ -1,26 +1,35 @@
 #![allow(dead_code)]
-// use rand_core::RngCore;
-use std::cmp;
-use std::iter::FromIterator;
 use std::ops::Index;
+use std::{cmp, vec};
 
 use rand::distributions::{Distribution, Uniform};
-use rand::prelude::*;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::RngCore;
-use rand::SeedableRng;
-// use rand_chacha::ChaCha8Rng;
 
+use std::fs::File;
+use std::io::prelude::*;
+
+//Misc Constants to make life easier
 const NUM_GEN: i32 = 100;
 const MUT_CHANCE: f32 = 0.15;
 const CROSS_CHANCE: f32 = 0.85;
+const MIN_DIST: u32 = 6;
+const N: u32 = 17;
+const D: u32 = 6;
 
 //utility functions
 fn minimum(a: u32, b: u32, c: u32) -> u32 {
     cmp::min(a, cmp::min(b, c))
 }
 
+//Function to find hamming distance between two codewords
+//as represented by unsigned 32 bit integers
+fn hamming_dist(a: u32, b: u32) -> u32 {
+    (a ^ b).count_ones() as u32
+}
+
+//Helper function to return a vectore of codewords from a chromosome
 fn words_from_chrom(chrome: &Vec<u32>, candidates: &Vec<u32>) -> Vec<u32> {
     let mut working_candidates = candidates.clone();
     let mut codewords: Vec<u32> = vec![];
@@ -43,9 +52,11 @@ fn words_from_chrom(chrome: &Vec<u32>, candidates: &Vec<u32>) -> Vec<u32> {
             }
         }
     }
+    //return
     codewords
 }
 
+//Helper function to return vector chromosome from vector of codewords
 fn chrom_from_words(codes: &Vec<u32>, candidates: &Vec<u32>) -> Vec<u32> {
     let mut result: Vec<u32> = vec![];
     let mut cand_clone = candidates.clone();
@@ -57,6 +68,7 @@ fn chrom_from_words(codes: &Vec<u32>, candidates: &Vec<u32>) -> Vec<u32> {
     result
 }
 
+//Helper function to check compatibility between codewords when using edit distance metric
 fn check_compat(word1: u32, word2: u32, compat_matrix: &Vec<Vec<u32>>) -> bool {
     let indx1 = compat_matrix[0].iter().position(|&x| x == word1).unwrap();
     let indx2 = compat_matrix[0].iter().position(|&y| y == word2).unwrap();
@@ -67,6 +79,8 @@ fn check_compat(word1: u32, word2: u32, compat_matrix: &Vec<Vec<u32>>) -> bool {
     }
 }
 
+//Edit distance function
+//requires use of string slices as input instead of integers so much slower
 fn edit_distance(s1: &str, s2: &str) -> u32 {
     // get length of unicode chars
     let len_s = s1.chars().count();
@@ -92,10 +106,11 @@ fn edit_distance(s1: &str, s2: &str) -> u32 {
             );
         }
     }
-
     return mat[len_s][len_t];
 }
 
+//Helper function used when using edit distance instead of hamming distance
+//returns 2D Vector of 1's for compatible words and 0's otherwise
 fn compat_matrix(codes: &Vec<u32>, mindist: u32) -> Vec<Vec<u32>> {
     let precomp = codes.clone();
     let mut precomp2: Vec<u32> = Vec::new();
@@ -118,8 +133,6 @@ fn compat_matrix(codes: &Vec<u32>, mindist: u32) -> Vec<Vec<u32>> {
         for j in 1..matrix.len() {
             let x = format!("{:016b}", matrix[i][0]);
             let y = format!("{:016b}", matrix[0][j]);
-            // let a = matrix[i][0];
-            // let b = matrix[0][j];
             let tmp = edit_distance(&x, &y);
             if tmp >= mindist {
                 matrix[i][j] = 1;
@@ -130,6 +143,7 @@ fn compat_matrix(codes: &Vec<u32>, mindist: u32) -> Vec<Vec<u32>> {
     matrix
 }
 
+//Unused Lexicode function that fitness function was built from
 fn lexicode(lexicodes: &mut Vec<u32>, compat: &Vec<Vec<u32>>) -> Vec<u32> {
     let clength = lexicodes.len();
     let mut candidates: Vec<u32> = compat[0].clone();
@@ -140,7 +154,7 @@ fn lexicode(lexicodes: &mut Vec<u32>, compat: &Vec<Vec<u32>>) -> Vec<u32> {
         if clength >= 1 {
             let mut flag: bool = true;
             for j in lexicodes.iter() {
-                if !check_compat(candidates[i], *j, compat) {
+                if hamming_dist(candidates[i], *j) < MIN_DIST {
                     flag = false;
                     continue;
                 }
@@ -153,18 +167,32 @@ fn lexicode(lexicodes: &mut Vec<u32>, compat: &Vec<Vec<u32>>) -> Vec<u32> {
     return lexicodes.to_vec();
 }
 
-pub fn create_candidates(n: u32) -> Vec<u32> {
-    let codes: Vec<u32> = (0..(2_u32.pow(n))).collect();
+//Helper function to return a vector of legal candidate codewords
+pub fn create_candidates(n: u32, d: u32) -> Vec<u32> {
+    let tmp_codes: Vec<u32> = (0..(2_u32.pow(n))).collect();
+    let mut codes: Vec<u32> = vec![0];
+    for i in &tmp_codes {
+        if hamming_dist(codes[0], *i) >= d {
+            codes.push(*i);
+        }
+    }
     codes
 }
+
+//Struct for Individual
+//contains:
+//chromosome - Vector of unsigned 32 bit integers
+//fitness - unsigned 32 bit integer
+//chance_mut - 32 bit float
 #[derive(Clone)]
 pub struct Individual {
     chromosome: Vec<u32>,
     fitness: u32,
     chance_mut: f32,
 }
-
+//Methods for Individual Struct
 impl Individual {
+    //"constructor"
     fn new(chromosome: Vec<u32>, fitness: u32, chance_mut: f32) -> Individual {
         Individual {
             chromosome: chromosome,
@@ -172,7 +200,7 @@ impl Individual {
             chance_mut: chance_mut,
         }
     }
-
+    //helper mthods
     pub fn len(&self) -> usize {
         self.chromosome.len()
     }
@@ -186,21 +214,23 @@ impl Individual {
     }
 }
 
-pub fn mutate(
-    rng: &mut dyn RngCore,
-    child: &mut Individual,
-    compat_matrix: &Vec<Vec<u32>>,
-    chance_mut: f32,
-) {
+//mutation function
+//input includes mutable reference to Individual which is mutated in place
+pub fn mutate(rng: &mut dyn RngCore, child: &mut Individual, chance_mut: f32) {
+    //check if individual mutates
     if rng.gen_bool(chance_mut as _) {
+        //choose and remove element
         let element = rng.gen_range(0..child.chromosome.len());
         child.chromosome.remove(element);
-        let mut cloned_matrix = compat_matrix[0].clone();
-        cloned_matrix.remove(0);
-        let mut child_codes = words_from_chrom(&child.chromosome, &cloned_matrix);
+
+        //create candidate words
+        let candidates = create_candidates(N, D);
+        let mut child_codes = words_from_chrom(&child.chromosome, &candidates);
         let tmp_child_codes = child_codes.clone();
         let mut done: bool = false;
-        for i in &cloned_matrix {
+
+        //logic to find a compatible replacement word and insert it into the chromosome of the child Individual
+        for i in &candidates {
             if done {
                 break;
             }
@@ -210,14 +240,14 @@ pub fn mutate(
                 }
                 if *i == *j {
                     break;
-                } else if !check_compat(*i, *j, compat_matrix) {
+                } else if hamming_dist(*i, *j) < MIN_DIST {
                     break;
                 } else {
                     match child_codes.binary_search(&i) {
                         Ok(_pos) => {}
                         Err(pos) => child_codes.insert(pos, *i),
                     }
-                    child.chromosome = chrom_from_words(&child_codes, &cloned_matrix);
+                    child.chromosome = chrom_from_words(&child_codes, &candidates);
                     done = true;
                 }
             }
@@ -225,43 +255,30 @@ pub fn mutate(
     }
 }
 
-impl Index<usize> for Individual {
-    type Output = u32;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.chromosome[index]
-    }
-}
+//Population struct
+//contains vector of individuals
 #[derive(Clone)]
 pub struct Population {
     pop: Vec<Individual>,
 }
 
+//methods for Population struct
 impl Population {
-    fn gen_pop(
-        popsize: u32,
-        n: u32,
-        d: u32,
-        chrom_size: u32,
-        chance_mut: f32,
-    ) -> (Vec<Individual>, Vec<Vec<u32>>) {
+    //generates a population of individuals with legal chromosomes
+    fn gen_pop(popsize: u32, n: u32, chrom_size: u32, chance_mut: f32) -> Vec<Individual> {
         let mut rng = rand::thread_rng();
-        let cand: Vec<u32> = create_candidates(n);
-        let compat = compat_matrix(&cand, d);
-        let mut candidates = compat[0].clone();
-        candidates = candidates.drain((1)..).collect();
+        let candidates: Vec<u32> = create_candidates(n, MIN_DIST);
         let mut pop: Vec<Individual> = vec![];
-        let idx: usize = 0;
+        let _idx: usize = 0;
 
         //filling population
         while pop.len() < (popsize as usize) {
             let mut tmp: Vec<u32> = vec![0];
-            // pop.push(tmp);
-            let tmp_idx: usize = 0;
+            let _tmp_idx: usize = 0;
             while tmp.len() < (chrom_size as usize) {
                 let indx = rng.gen_range(1..candidates.len());
                 for i in &tmp {
-                    if check_compat(*i, candidates[indx], &compat) == false {
+                    if hamming_dist(*i, candidates[indx]) < MIN_DIST {
                         break;
                     }
                 }
@@ -271,15 +288,41 @@ impl Population {
             let tmp_ind = Individual::new(tmp, 0_u32, chance_mut);
             pop.push(tmp_ind);
         }
-        (pop, compat)
+        //return population
+        pop
     }
 
+    //Standard Tournament Selection implementation
+    // # Arguments
+    // * `rng` - mutable reference to random number generator
+    // * `population` - reference to vector containing Individuals
+    // * `tourn_size` - tournament size
+    // * Returns an Individual
+    pub fn tournament_select(
+        rng: &mut dyn RngCore,
+        population: &Vec<Individual>,
+        tourn_size: usize,
+    ) -> Individual {
+        let mut tourn: Vec<Individual> = vec![];
+        while tourn.len() < tourn_size {
+            let indiv = population.choose(rng).expect("got an empty population");
+            tourn.push(indiv.clone());
+        }
+        let child = tourn.iter().max_by_key(|f| f.fitness).unwrap().clone();
+        child
+    }
+
+    //Roulette Wheel Selection implementation
     pub fn roulette_select(rng: &mut dyn RngCore, population: &Vec<Individual>) -> Individual {
-        let tmp = population.clone();
+        let _tmp = population.clone();
+
+        //Find total population fitness
         let total_fitness: f32 = population
             .iter()
             .map(|individual| individual.fitness as f32)
             .sum();
+
+        //Loop through population and select winner
         loop {
             let indiv = population.choose(rng).expect("got an empty population");
 
@@ -291,106 +334,78 @@ impl Population {
         }
     }
 
-    pub fn UniformCrossover(
+    //Single point crossover
+    //returns single individual
+    pub fn sp_crossover(
         rng: &mut dyn RngCore,
         parent_1: &Individual,
         parent_2: &Individual,
-        compat_matrix: &Vec<Vec<u32>>,
         cross_chance: f32,
     ) -> Individual {
+        //check if crossover occurs
         if rng.gen_bool(cross_chance as _) {
-            let crossoverpoint = Uniform::new(1, parent_1.chromosome.len()).sample(rng);
-            let mut candidates = compat_matrix[0].clone();
-            candidates = candidates.drain(1..).collect();
+            let candidates = create_candidates(N, D);
+            //sanity checks
+            if parent_1.len() != parent_2.len() {
+                if parent_1.len() > parent_2.len() {
+                    let new = Individual::new(parent_1.chromosome.clone(), 0, MUT_CHANCE);
+                    return new;
+                } else {
+                    let new = Individual::new(parent_2.chromosome.clone(), 0, MUT_CHANCE);
+                    return new;
+                }
+            }
+            //pick crossover point
+            let crossoverpoint = Uniform::new(0, parent_1.chromosome.len()).sample(rng);
             let mut child: Vec<u32> = parent_1.chromosome.clone();
-            let dispose: Vec<u32> = child.drain(crossoverpoint..).collect();
+            //remove data after crossover point
+            let _dispose: Vec<u32> = child.drain(crossoverpoint..).collect();
             let mut p2_dna = parent_2.chromosome.clone();
+            //remove data before crossover point
             p2_dna = p2_dna.drain(crossoverpoint..).collect();
             let mut child_words = words_from_chrom(&child, &candidates);
-            let mut p2_dna_words = words_from_chrom(&p2_dna, &candidates);
+            let p2_dna_words = words_from_chrom(&p2_dna, &candidates);
 
+            //iterate through vector of words from 2nd parent to find ones to insert into child
             for i in &p2_dna_words {
                 let mut flag: bool = true;
                 for j in &child_words {
-                    if !check_compat(*i, *j, &compat_matrix) {
+                    if hamming_dist(*i, *j) < MIN_DIST {
                         flag = false;
+                        break;
                     }
                 }
+                if flag {
+                    child_words.push(*i);
+                }
             }
-            child.extend_from_slice(&p2_dna);
+            child_words.sort();
+            let child = chrom_from_words(&child_words, &candidates);
             let new = Individual::new(child, 0_u32, MUT_CHANCE);
             new
         } else {
             let new = Individual::new(parent_1.chromosome.clone(), 0, MUT_CHANCE);
             new
         }
-        // assert_eq!(parent_1.chromosome.len(), parent_2.chromosome.len());
-        //     if parent_1.chromosome.len() != parent_2.chromosome.len() {
-        //         println!("Diff length chromosome...");
-        //     }
-        //     if rng.gen_bool(cross_chance as _) {
-        //         let mut cloned_matrix = compat_matrix.clone();
-        //         let mut child: Vec<u32> = Vec::new();
-        //         let num_genes = parent_1.chromosome.len();
-        //         let mut cand_codes_vec: Vec<u32> = vec![];
-        //         let mut gene_idx = 1;
-        //         // loop until chromosome is full
-        //         while gene_idx < num_genes {
-        //             let gene = if rng.gen_bool(0.5) {
-        //                 parent_1[gene_idx]
-        //             } else {
-        //                 parent_2[gene_idx]
-        //             };
-        //             if child.len() == 0 {
-        //                 child.push(gene);
-        //                 cand_codes_vec = cloned_matrix[0].drain((gene + 1) as usize..).collect();
-        //             } else {
-        //                 let mut flag: bool = true;
-
-        //                 for j in &child {
-        //                     let new_code = cand_codes_vec[*j as usize];
-        //                     let indx = compat_matrix[0]
-        //                         .iter()
-        //                         .position(|&x| x == new_code)
-        //                         .unwrap();
-        //                     let child_indx = compat_matrix[0]
-        //                         .iter()
-        //                         .position(|&y| y == cand_codes_vec[gene as usize])
-        //                         .unwrap();
-        //                     if compat_matrix[indx][child_indx] == 0 {
-        //                         flag = false;
-        //                         continue;
-        //                     }
-        //                 }
-        //                 if flag == true {
-        //                     child.push(gene);
-        //                     cand_codes_vec = cand_codes_vec.drain((gene + 1) as usize..).collect();
-        //                     gene_idx += 1;
-        //                 }
-        //             }
-        //         }
-        //         let mut child_individual = Individual::new(child, 0, cross_chance);
-        //         child_individual
-        //     } else {
-        //         let child: Vec<u32> = parent_1.chromosome.clone();
-        //         let mut child_individual = Individual::new(child, 0, cross_chance);
-        //         child_individual
-        //     }
     }
 }
 
 //greedy lexicode algorithm for fitness
-fn fitness(lexicodes: &mut Vec<u32>, compat: &Vec<Vec<u32>>) -> (Vec<u32>, u32) {
+//returns a tuple of the resultant codewords and the length of the codeword vector
+fn fitness(lexicodes: &mut Vec<u32>, cand: &Vec<u32>) -> (Vec<u32>, u32) {
     let clength = lexicodes.len();
-    let mut candidates: Vec<u32> = compat[0].clone();
+    let mut candidates = cand.clone();
+    //find max value of the seed codes
     let maxvalue = lexicodes.iter().max().unwrap();
+    //find place in candidate codeword vector to begin iterating from for new codewords
     let indx1 = candidates.iter().position(|&x| x == *maxvalue).unwrap();
     candidates = candidates.drain((indx1 + 1)..).collect();
+    //iterate through candidate codewords to find words compatible to all others in the set
     for i in 0..candidates.len() {
         if clength >= 1 {
             let mut flag: bool = true;
             for j in lexicodes.iter() {
-                if !check_compat(candidates[i], *j, compat) {
+                if hamming_dist(candidates[i], *j) < MIN_DIST {
                     flag = false;
                     continue;
                 }
@@ -404,100 +419,100 @@ fn fitness(lexicodes: &mut Vec<u32>, compat: &Vec<Vec<u32>>) -> (Vec<u32>, u32) 
     return (lexicodes.to_vec(), fit);
 }
 
+//Co-ordination function for the mating events
+//parents are selected, followed by crossover and finally mutation
+//process repeats until length of population
 pub fn evolve(
     rng: &mut dyn RngCore,
     population: &Vec<Individual>,
-    compat_matrix: &Vec<Vec<u32>>,
     chance_cross: f32,
     chance_mut: f32,
+    tourn_size: usize,
 ) -> Vec<Individual> {
     assert!(!population.is_empty());
     let mut new_pop: Vec<Individual> = vec![];
-    // let elite = vec![];
+
+    //elitism implementation
+    let elite: &Individual = population.iter().max_by_key(|f| f.fitness).unwrap();
+    let test = elite.clone();
+    new_pop.push(test);
+
     for _ in 1..population.len() {
-        let parent_1 = Population::roulette_select(rng, population);
-        let parent_2 = Population::roulette_select(rng, population);
-        let mut child =
-            Population::UniformCrossover(rng, &parent_1, &parent_2, compat_matrix, chance_cross);
-        mutate(rng, &mut child, compat_matrix, chance_mut);
+        let parent_1 = Population::tournament_select(rng, population, tourn_size);
+        let parent_2 = Population::tournament_select(rng, population, tourn_size);
+        // let parent_1 = Population::roulette_select(rng, population);
+        // let parent_2 = Population::roulette_select(rng, population);
+        let mut child = Population::sp_crossover(rng, &parent_1, &parent_2, chance_cross);
+        mutate(rng, &mut child, chance_mut);
         new_pop.push(child)
     }
     new_pop
 }
 
-pub fn get_fitness(populat: &mut Population, compat_matrix: &Vec<Vec<u32>>) {
-    let mut candidates = compat_matrix[0].clone();
-    let _discard = candidates.remove(0);
+//Helper function to find and set the population values for each individual of population
+pub fn get_fitness(populat: &mut Population) {
+    let candidates = create_candidates(N, D);
     for mut i in &mut populat.pop {
         let mut words = words_from_chrom(&i.chromosome, &candidates);
-        let (_codes, fit) = fitness(&mut words, &compat_matrix);
-        i.fitness = fit;
+        if words.len() < 1 {
+            i.fitness = 0;
+        } else {
+            let (_codes, fit) = fitness(&mut words, &candidates);
+            i.fitness = fit;
+        }
     }
 }
 
+//Entry point to Program
 fn main() {
-    let codes: Vec<u32> = create_candidates(6);
-    // let c_matrix = compat_matrix(&codes, 3);
+    //Random number generator
     let mut rng = rand::thread_rng();
-    let init: Vec<Individual> = vec![];
-    let mut test = Population { pop: init };
 
-    //GA init
-    let (pop1, compat_matrix) = Population::gen_pop(50, 6, 3, 7, MUT_CHANCE);
-    let mut candidates = compat_matrix[0].clone();
-    candidates = candidates.drain(1..).collect();
+    //GA initialization
+    let pop1 = Population::gen_pop(500, N, 330, MUT_CHANCE);
+    let candidates = create_candidates(N, D);
     let mut population = Population { pop: pop1 };
-    get_fitness(&mut population, &compat_matrix);
+
+    //establish initial population fitness
+    get_fitness(&mut population);
+
     //GA loop
     for i in 0..NUM_GEN {
-        evolve(
-            &mut rng,
-            &population.pop,
-            &compat_matrix,
-            CROSS_CHANCE,
-            MUT_CHANCE,
-        );
-        get_fitness(&mut population, &compat_matrix);
+        population.pop = evolve(&mut rng, &population.pop, CROSS_CHANCE, MUT_CHANCE, 3);
+        get_fitness(&mut population);
         println!("Gen: {}", i);
     }
+
+    // I/O
+    let mut file = File::create("results.txt").expect("create failed");
+
+    //Output control fitness based on zero vector
+    let mut control_vec: Vec<u32> = vec![0];
+    let (control_codes, control_fit) = fitness(&mut control_vec, &candidates);
+    println!("Starting with 0 vector, fit was: {}", control_fit);
+    let result = format!("Starting with 0 vector, fit was: {}", control_fit);
+    writeln!(file, "{}", result).expect("write failed");
+
+    //More I/O
+    let mut best_fit = 0;
     for i in population.pop {
         println!("number words: {}  ", i.fitness);
+        if i.fitness == 0 {
+            continue;
+        }
         let mut seed_words = words_from_chrom(&i.chromosome, &candidates);
-        let (mut words, fit) = fitness(&mut seed_words, &compat_matrix);
+        let (words, fit) = fitness(&mut seed_words, &candidates);
+        if fit > best_fit {
+            best_fit = fit;
+        }
+        let result = format!("Number of words: {}", fit);
+        writeln!(file, "{}", result).expect("write failed");
         for j in &words {
-            println!(" words: {:06b}", *j);
+            println!(" words: {:017b}", *j);
         }
     }
+    let besty = format!("Best fit was: {}", best_fit);
+    writeln!(file, "{}", besty).expect("msg");
 
-    // let genetic_algo = GeneticAlgorithm::new(
-    //     RouletteWheelSelection::default(),
-    //     UniformCrossover::new(0.85),
-    //     CodeMutation::new(0.15),
-    // );
-
-    // let bit_test = bitmask_test(&codes, 3);
-    // for i in &codes {
-    //     println!("{:08b}", i);
-    // }
-    // let test = codes[11] ^ codes[14];
-    // let test2 = compat_matrix(&codes, 3);
-    let mut codeinit: Vec<u32> = vec![0];
-    // let codie_edit = lexicode(&mut codeinit, &test2);
-    // let codie_edit = lexicode3(5, &codes, &mut codeinit);
-    // for i in &codie_edit {
-    //     println!("{:012b}", i);
-    //     println!("int: {}", i);
-    // }
-    // let codies = lexicode2(6, &codes, &mut codeinit);
-    // for i in &codies {
-    //     println!("{:017b}", i);
-    //     println!("int: {}", i);
-    // }
-    // println!("{}", codie_edit.len());
     println!("Hello, world!");
-    // println!("{:08b}", test);
-    // let x = format!("{:08b}", codes[5]);
-    // let x_vec: Vec<char> = x.chars().collect();
-    // let y = format!("{:08b}", codes[2]);
-    // let y_vec: Vec<char> = y.chars().collect();
 }
