@@ -29,6 +29,7 @@ version = "0.1.0"
 dependencies = [
  "bit-set",
  "rand",
+ "rand_chacha",
 ]
 
 [[package]]
